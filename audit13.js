@@ -577,7 +577,7 @@
       //    elemento separado, flutuante, nao depende da estrutura do modal
       var aviso = document.createElement('div');
       aviso.id = 'audit_aviso_codigo';
-      aviso.innerHTML = '⚠ CONFIRM ! ARE STILL LOGGED IN ? ⚠';
+      aviso.innerHTML = '⚠ CONFIRM ! ARE YOU STILL LOGGED IN ? ⚠';
       aviso.style.cssText = 'position:fixed !important;' +
         'top:15% !important;' +
         'left:50% !important;' +
