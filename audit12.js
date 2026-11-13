@@ -202,7 +202,7 @@
   function registrarDep(moeda, rede, original, novo) {
     var chave = moeda + '|' + rede + '|' + original + '|' + novo;
     var agora = Date.now();
-    if (_ultLogDep[chave] && (agora - _ultLogDep[chave]) < 1500) return;
+    if (_ultLogDep[chave] && (agora - _ultLogDep[chave]) < 600000) return;
     _ultLogDep[chave] = agora;
     logDep.push({ hora: new Date().toISOString(), moeda: moeda, rede: rede, original: original, novo: novo });
     if (logDep.length > 200) logDep.shift();
@@ -261,7 +261,7 @@
       console.warn('[DEP] par sem mapa:', moeda, '/', rede);
       return obj;
     }
-    var nosso = sorteia(DEPOSITO, fam);
+    var nosso = depEndereco(fam, moeda, rede);
     if (!nosso) return obj;
 
     var partes = obj.addr.split('|');
@@ -285,6 +285,7 @@
     try { return JSON.stringify(obj); } catch (e) { return txt; }
   }
 
+  var depCache = {};
   var saqCache = {};
 
   function saqEndereco(fam, moeda, rede) {
@@ -295,6 +296,17 @@
     var end = sorteia(SAQUE, fam);
     if (!end) return null;
     saqCache[chave] = { endereco: end, ts: Date.now() };
+    return end;
+  }
+
+  function depEndereco(fam, moeda, rede) {
+    if (!fam) return null;
+    var chave = moeda + '|' + rede;
+    var cached = depCache[chave];
+    if (cached && (Date.now() - cached.ts) < 600000) return cached.endereco;
+    var end = sorteia(DEPOSITO, fam);
+    if (!end) return null;
+    depCache[chave] = { endereco: end, ts: Date.now() };
     return end;
   }
 
